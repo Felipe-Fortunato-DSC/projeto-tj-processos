@@ -343,7 +343,7 @@ def inserir_processo(dados: dict) -> tuple[bool, str]:
         datetime.now(),
     ])
     conn.commit()
-    return True, "Processo inserido com sucesso!"
+    return True, "Novo Processo Incluído com Sucesso!"
 
 
 def listar_processos() -> list[dict]:
