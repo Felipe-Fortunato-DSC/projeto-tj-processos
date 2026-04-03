@@ -269,7 +269,7 @@ def tela_login():
         usuarios = listar_usuarios(incluir_master=True)
 
         with st.form("form_login", clear_on_submit=False):
-            usuario_sel = st.selectbox("Usuário", usuarios, key="sel_usuario")
+            usuario_sel = st.selectbox("Usuário", usuarios, index=None, placeholder="Selecione o usuário...", key="sel_usuario")
             senha_input = st.text_input("Senha", type="password", key="inp_senha")
             btn_login = st.form_submit_button("Entrar", use_container_width=True, type="primary")
 
