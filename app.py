@@ -755,7 +755,7 @@ def dialog_confirmar_sem_conclusao():
             dados = st.session_state.pop("pending_inclusao")
             ok, msg = inserir_processo(dados)
             if ok:
-                st.toast(msg, icon="✅")
+                st.session_state.inclusao_sucesso = msg
                 st.rerun()
             else:
                 st.session_state.numero_duplicado = dados["numero_processo"]
@@ -776,6 +776,10 @@ def aba_inclusao():
     TIPOS_RESPONSAVEL = get_tipos_responsavel()
 
     st.subheader("Incluir Novo Processo")
+
+    if "inclusao_sucesso" in st.session_state:
+        st.success(st.session_state.pop("inclusao_sucesso"))
+
 
     agora = datetime.now()
 
@@ -843,7 +847,7 @@ def aba_inclusao():
                 if abrir_conclusao:
                     ok, msg = inserir_processo(dados)
                     if ok:
-                        st.toast(msg, icon="✅")
+                        st.session_state.inclusao_sucesso = msg
                         st.rerun()
                     else:
                         st.error(msg)
