@@ -1091,6 +1091,8 @@ def app_principal():
         st.caption(f"Perfil: {tipo_label}")
         st.markdown(f"*{datetime.now().strftime('%d/%m/%Y %H:%M')}*")
         st.markdown("---")
+        st.link_button("📖 Tutorial", url="https://github.com/Felipe-Fortunato-DSC/projeto-tj-processos/blob/main/TUTORIAL.md", use_container_width=True)
+        st.markdown("---")
         if st.button("Sair", use_container_width=True):
             st.session_state.autenticado = False
             st.session_state.usuario_logado = ""
