@@ -122,19 +122,12 @@ def init_db():
     conn.execute("UPDATE usuarios SET tipo_usuario = 'Administrador' WHERE lower(tipo_usuario) = 'administrador'")
     conn.execute("UPDATE usuarios SET tipo_usuario = 'Básico' WHERE lower(tipo_usuario) = 'basico'")
 
-    # Garantir perfis dos usuários padrão
-    conn.execute("UPDATE usuarios SET tipo_usuario = 'Administrador' WHERE nome = 'Monique'")
-    for nome in [n for n in USUARIOS_PADRAO if n != "Monique"]:
-        conn.execute(
-            "UPDATE usuarios SET tipo_usuario = 'Básico' WHERE nome = ?", [nome]
-        )
-
-    # Inserir usuários padrão (caso ainda não existam)
-    for nome in USUARIOS_PADRAO:
-        existe = conn.execute(
-            "SELECT COUNT(*) FROM usuarios WHERE nome = ?", [nome]
-        ).fetchone()[0]
-        if not existe:
+    # Inserir usuários padrão apenas na primeira execução (banco vazio)
+    nao_master_count = conn.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE tipo_usuario != 'Master'"
+    ).fetchone()[0]
+    if nao_master_count == 0:
+        for nome in USUARIOS_PADRAO:
             senha_hash = bcrypt.hashpw(SENHA_PADRAO.encode(), bcrypt.gensalt()).decode()
             uid = conn.execute("SELECT nextval('usuarios_id_seq')").fetchone()[0]
             tipo = "Administrador" if nome == "Monique" else "Básico"
@@ -142,6 +135,7 @@ def init_db():
                 "INSERT INTO usuarios (id, nome, senha_hash, email, tipo_usuario) VALUES (?, ?, ?, ?, ?)",
                 [uid, nome, senha_hash, "", tipo],
             )
+        conn.commit()
 
     # Criar usuário Master (único, imutável)
     master_existe = conn.execute(
