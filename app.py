@@ -998,6 +998,8 @@ def aba_gerenciamento():
         if bot_salvar.button("Salvar Alterações", type="primary", use_container_width=True):
             changed = 0
             for u in page_users:
+                if u["tipo_usuario"] == "Master":
+                    continue
                 new_nome  = (st.session_state.get(f"ger_nome_{u['id']}",  u["nome"]) or "").strip()
                 new_email = st.session_state.get(f"ger_email_{u['id']}", u["email"])
                 new_tipo  = st.session_state.get(f"ger_tipo_{u['id']}",  u["tipo_usuario"])
