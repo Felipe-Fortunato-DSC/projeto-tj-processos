@@ -2,6 +2,7 @@ import bcrypt
 import duckdb
 import streamlit as st
 from datetime import datetime
+from utils import agora_br
 
 SENHA_MASTER = "Master290915@"
 DB_LOCAL = "data/tj_processos.db"
@@ -340,7 +341,7 @@ def inserir_processo(dados: dict) -> tuple[bool, str]:
         dados["dias_aberto"],
         dados.get("observacao", ""),
         dados.get("criado_por", ""),
-        datetime.now(),
+        agora_br(),
     ])
     conn.commit()
     return True, "Novo Processo Incluído com Sucesso!"
@@ -393,7 +394,7 @@ def atualizar_processo(
     """, [
         numero_processo, reu_preso, tipo, vara, sistema,
         responsavel, situacao, observacao,
-        data_conclusao, dias_aberto, datetime.now(),
+        data_conclusao, dias_aberto, agora_br(),
         processo_id,
     ])
     conn.commit()

@@ -26,7 +26,7 @@ from database import (
     numero_processo_existe,
     db_mode,
 )
-from utils import calcular_dias_uteis, formatar_data_br, formatar_numero_processo
+from utils import calcular_dias_uteis, formatar_data_br, formatar_numero_processo, agora_br
 
 # ─────────────────────────────────────────────
 # CONFIGURAÇÃO DA PÁGINA
@@ -607,7 +607,7 @@ def aba_visualizacao():
         try:
             dt_original = datetime.strptime(str(linha["data_conclusao"])[:16], "%Y-%m-%d %H:%M")
         except Exception:
-            dt_original = datetime.now()
+            dt_original = agora_br()
         data_atual = dt_original.date()
         hora_original = dt_original.time()
 
@@ -781,7 +781,7 @@ def aba_inclusao():
         st.success(st.session_state.pop("inclusao_sucesso"))
 
 
-    agora = datetime.now()
+    agora = agora_br()
 
     with st.form("form_novo_processo", clear_on_submit=True):
         abrir_conclusao = st.checkbox("Conclusão Aberta")
@@ -1096,7 +1096,7 @@ def app_principal():
         st.markdown(f"### Olá, **{st.session_state.usuario_logado}**")
         tipo_label = {"Master": "Master", "Administrador": "Administrador"}.get(st.session_state.tipo_usuario, "Básico")
         st.caption(f"Perfil: {tipo_label}")
-        st.markdown(f"*{datetime.now().strftime('%d/%m/%Y %H:%M')}*")
+        st.markdown(f"*{agora_br().strftime('%d/%m/%Y %H:%M')}*")
         if db_mode() == "motherduck":
             st.caption("🟢 MotherDuck")
         else:

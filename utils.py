@@ -1,5 +1,12 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import holidays
+
+BRASILIA = timezone(timedelta(hours=-3))
+
+
+def agora_br() -> datetime:
+    """Retorna o datetime atual no horário de Brasília (UTC-3), sem tzinfo."""
+    return datetime.now(tz=BRASILIA).replace(tzinfo=None)
 
 
 def calcular_dias_uteis(data_inicio: date, data_fim: date = None) -> float:
