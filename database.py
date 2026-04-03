@@ -11,20 +11,35 @@ DB_LOCAL = "data/tj_processos.db"
 # CONEXÃO (cached por sessão do Streamlit)
 # ─────────────────────────────────────────────
 @st.cache_resource
-def get_conn() -> duckdb.DuckDBPyConnection:
+def get_conn() -> tuple[duckdb.DuckDBPyConnection, str]:
     try:
         token = st.secrets["motherduck"]["token"]
         conn = duckdb.connect(f"md:tj_processos?motherduck_token={token}")
-    except (KeyError, Exception):
+        return conn, "motherduck"
+    except KeyError:
         conn = duckdb.connect(DB_LOCAL)
+        return conn, "local"
+    except Exception as e:
+        st.error(f"Erro ao conectar ao MotherDuck: {e}")
+        conn = duckdb.connect(DB_LOCAL)
+        return conn, "local"
+
+
+def _conn():
+    conn, _ = get_conn()
     return conn
+
+
+def db_mode() -> str:
+    _, mode = get_conn()
+    return mode
 
 
 # ─────────────────────────────────────────────
 # INICIALIZAÇÃO DAS TABELAS
 # ─────────────────────────────────────────────
 def init_db():
-    conn = get_conn()
+    conn = _conn()
 
     # ── Usuários ──
     conn.execute("""
@@ -103,7 +118,7 @@ def init_db():
 # PARÂMETROS (Tipo, Vara, Situação)
 # ─────────────────────────────────────────────
 def listar_opcoes(categoria: str) -> list[str]:
-    conn = get_conn()
+    conn = _conn()
     rows = conn.execute(
         "SELECT valor FROM parametros WHERE categoria = ? ORDER BY ordem, valor",
         [categoria],
@@ -112,7 +127,7 @@ def listar_opcoes(categoria: str) -> list[str]:
 
 
 def listar_parametros(categoria: str) -> list[dict]:
-    conn = get_conn()
+    conn = _conn()
     rows = conn.execute(
         "SELECT id, valor FROM parametros WHERE categoria = ? ORDER BY ordem, valor",
         [categoria],
@@ -121,7 +136,7 @@ def listar_parametros(categoria: str) -> list[dict]:
 
 
 def adicionar_parametro(categoria: str, valor: str) -> tuple[bool, str]:
-    conn = get_conn()
+    conn = _conn()
     valor = valor.strip()
     if not valor:
         return False, "O valor não pode ser vazio."
@@ -144,7 +159,7 @@ def adicionar_parametro(categoria: str, valor: str) -> tuple[bool, str]:
 
 
 def remover_parametro(param_id: int) -> tuple[bool, str]:
-    conn = get_conn()
+    conn = _conn()
     conn.execute("DELETE FROM parametros WHERE id = ?", [param_id])
     conn.commit()
     return True, "Parâmetro removido com sucesso."
@@ -154,7 +169,7 @@ def remover_parametro(param_id: int) -> tuple[bool, str]:
 # USUÁRIOS
 # ─────────────────────────────────────────────
 def listar_usuarios(incluir_master: bool = False) -> list[str]:
-    conn = get_conn()
+    conn = _conn()
     if incluir_master:
         rows = conn.execute("SELECT nome FROM usuarios ORDER BY nome").fetchall()
     else:
@@ -165,7 +180,7 @@ def listar_usuarios(incluir_master: bool = False) -> list[str]:
 
 
 def listar_usuarios_completo() -> list[dict]:
-    conn = get_conn()
+    conn = _conn()
     rows = conn.execute(
         "SELECT id, nome, email, tipo_usuario FROM usuarios ORDER BY nome"
     ).fetchall()
@@ -178,7 +193,7 @@ def listar_usuarios_completo() -> list[dict]:
 
 
 def get_tipo_usuario(nome: str) -> str:
-    conn = get_conn()
+    conn = _conn()
     row = conn.execute(
         "SELECT tipo_usuario FROM usuarios WHERE nome = ?", [nome]
     ).fetchone()
@@ -191,7 +206,7 @@ def get_tipo_usuario(nome: str) -> str:
 
 
 def verificar_senha(nome: str, senha: str) -> bool:
-    conn = get_conn()
+    conn = _conn()
     row = conn.execute(
         "SELECT senha_hash FROM usuarios WHERE nome = ?", [nome]
     ).fetchone()
@@ -206,7 +221,7 @@ def trocar_senha(nome: str, senha_atual: str, nova_senha: str) -> tuple[bool, st
     if len(nova_senha) < 6:
         return False, "A nova senha deve ter pelo menos 6 caracteres."
     nova_hash = bcrypt.hashpw(nova_senha.encode(), bcrypt.gensalt()).decode()
-    conn = get_conn()
+    conn = _conn()
     conn.execute(
         "UPDATE usuarios SET senha_hash = ? WHERE nome = ?", [nova_hash, nome]
     )
@@ -220,7 +235,7 @@ def adicionar_usuario(nome: str, email: str, tipo_usuario: str, senha: str) -> t
         return False, "O nome não pode ser vazio."
     if len(senha) < 6:
         return False, "A senha deve ter pelo menos 6 caracteres."
-    conn = get_conn()
+    conn = _conn()
     existe = conn.execute(
         "SELECT COUNT(*) FROM usuarios WHERE nome = ?", [nome]
     ).fetchone()[0]
@@ -238,7 +253,7 @@ def adicionar_usuario(nome: str, email: str, tipo_usuario: str, senha: str) -> t
 
 def atualizar_usuario(usuario_id: int, nome: str, email: str, tipo_usuario: str) -> tuple[bool, str]:
     nome = nome.strip()
-    conn = get_conn()
+    conn = _conn()
     row = conn.execute("SELECT tipo_usuario FROM usuarios WHERE id = ?", [usuario_id]).fetchone()
     if row and row[0] == "Master":
         return False, "O usuário Master não pode ser editado."
@@ -259,14 +274,14 @@ def redefinir_senha_usuario(usuario_id: int, nova_senha: str) -> tuple[bool, str
     if len(nova_senha) < 6:
         return False, "A senha deve ter pelo menos 6 caracteres."
     nova_hash = bcrypt.hashpw(nova_senha.encode(), bcrypt.gensalt()).decode()
-    conn = get_conn()
+    conn = _conn()
     conn.execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", [nova_hash, usuario_id])
     conn.commit()
     return True, "Senha redefinida com sucesso."
 
 
 def remover_usuario(usuario_id: int, nome_logado: str) -> tuple[bool, str]:
-    conn = get_conn()
+    conn = _conn()
     row = conn.execute("SELECT nome, tipo_usuario FROM usuarios WHERE id = ?", [usuario_id]).fetchone()
     if not row:
         return False, "Usuário não encontrado."
@@ -284,7 +299,7 @@ def remover_usuario(usuario_id: int, nome_logado: str) -> tuple[bool, str]:
 # PROCESSOS
 # ─────────────────────────────────────────────
 def numero_processo_existe(numero: str) -> bool:
-    conn = get_conn()
+    conn = _conn()
     digitos = "".join(c for c in numero if c.isdigit())
     return conn.execute(
         "SELECT COUNT(*) FROM processos "
@@ -294,7 +309,7 @@ def numero_processo_existe(numero: str) -> bool:
 
 
 def inserir_processo(dados: dict) -> tuple[bool, str]:
-    conn = get_conn()
+    conn = _conn()
     existe = conn.execute(
         "SELECT COUNT(*) FROM processos WHERE numero_processo = ?",
         [dados["numero_processo"]],
@@ -329,7 +344,7 @@ def inserir_processo(dados: dict) -> tuple[bool, str]:
 
 
 def listar_processos() -> list[dict]:
-    conn = get_conn()
+    conn = _conn()
     rows = conn.execute("""
         SELECT id, data_conclusao, numero_processo, reu_preso, tipo, vara,
                sistema, responsavel, situacao, dias_aberto, observacao,
@@ -359,7 +374,7 @@ def atualizar_processo(
     data_conclusao: datetime,
     dias_aberto: float,
 ) -> tuple[bool, str]:
-    conn = get_conn()
+    conn = _conn()
     conflito = conn.execute(
         "SELECT COUNT(*) FROM processos WHERE numero_processo = ? AND id != ?",
         [numero_processo, processo_id],

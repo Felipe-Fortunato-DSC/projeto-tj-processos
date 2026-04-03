@@ -24,6 +24,7 @@ from database import (
     listar_processos,
     atualizar_processo,
     numero_processo_existe,
+    db_mode,
 )
 from utils import calcular_dias_uteis, formatar_data_br, formatar_numero_processo
 
@@ -1092,6 +1093,10 @@ def app_principal():
         tipo_label = {"Master": "Master", "Administrador": "Administrador"}.get(st.session_state.tipo_usuario, "Básico")
         st.caption(f"Perfil: {tipo_label}")
         st.markdown(f"*{datetime.now().strftime('%d/%m/%Y %H:%M')}*")
+        if db_mode() == "motherduck":
+            st.caption("🟢 MotherDuck")
+        else:
+            st.caption("🔴 Banco local (dados não persistem)")
         st.markdown("---")
         st.link_button("📖 Tutorial", url="https://github.com/Felipe-Fortunato-DSC/projeto-tj-processos/blob/main/TUTORIAL.md", use_container_width=True)
         st.markdown("---")
