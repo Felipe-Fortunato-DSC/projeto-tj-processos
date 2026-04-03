@@ -1,0 +1,432 @@
+import bcrypt
+import duckdb
+import streamlit as st
+from datetime import datetime
+
+SENHA_PADRAO = "TJ12345"
+SENHA_MASTER = "Master290915@"
+USUARIOS_PADRAO = ["Alice", "Maria Clara", "Larissa", "Monique"]
+DB_LOCAL = "data/tj_processos.db"
+
+PARAMETROS_DEFAULT = {
+    "tipo_processo": ["Sentença", "Embargos"],
+    "vara":          ["V JVD", "I JVD", "16 VC", "39 VC"],
+    "situacao":      ["Minutando", "Juíza", "Corrigida", "Lançada"],
+}
+
+
+# ─────────────────────────────────────────────
+# CONEXÃO (cached por sessão do Streamlit)
+# ─────────────────────────────────────────────
+@st.cache_resource
+def get_conn() -> duckdb.DuckDBPyConnection:
+    try:
+        token = st.secrets["motherduck"]["token"]
+        conn = duckdb.connect(f"md:tj_processos?motherduck_token={token}")
+    except (KeyError, Exception):
+        conn = duckdb.connect(DB_LOCAL)
+    return conn
+
+
+# ─────────────────────────────────────────────
+# INICIALIZAÇÃO DAS TABELAS
+# ─────────────────────────────────────────────
+def init_db():
+    conn = get_conn()
+
+    # ── Usuários ──
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id           INTEGER PRIMARY KEY,
+            nome         VARCHAR UNIQUE NOT NULL,
+            senha_hash   VARCHAR NOT NULL,
+            email        VARCHAR DEFAULT '',
+            tipo_usuario VARCHAR DEFAULT 'Administrador',
+            criado_em    TIMESTAMP DEFAULT current_timestamp
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS usuarios_id_seq START 1")
+
+    # Migrações de colunas (tabela já existente)
+    for col, definition in [
+        ("email",        "VARCHAR DEFAULT ''"),
+        ("tipo_usuario", "VARCHAR DEFAULT 'Administrador'"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE usuarios ADD COLUMN {col} {definition}")
+        except Exception:
+            pass
+
+    # ── Processos ──
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS processos (
+            id               INTEGER PRIMARY KEY,
+            data_conclusao   TIMESTAMP,
+            numero_processo  VARCHAR UNIQUE NOT NULL,
+            reu_preso        VARCHAR NOT NULL,
+            tipo             VARCHAR NOT NULL,
+            vara             VARCHAR NOT NULL,
+            sistema          VARCHAR NOT NULL,
+            responsavel      VARCHAR NOT NULL,
+            situacao         VARCHAR NOT NULL,
+            dias_aberto      DOUBLE,
+            observacao       VARCHAR DEFAULT '',
+            criado_por       VARCHAR DEFAULT '',
+            criado_em        TIMESTAMP DEFAULT current_timestamp,
+            atualizado_em    TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS processos_id_seq START 1")
+
+    try:
+        conn.execute("ALTER TABLE processos ALTER COLUMN data_conclusao DROP NOT NULL")
+    except Exception:
+        pass
+
+    # ── Parâmetros (Tipo, Vara, Situação) ──
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS parametros (
+            id        INTEGER PRIMARY KEY,
+            categoria VARCHAR NOT NULL,
+            valor     VARCHAR NOT NULL,
+            ordem     INTEGER DEFAULT 0
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS parametros_id_seq START 1")
+
+    # Seed dos parâmetros padrão
+    for categoria, valores in PARAMETROS_DEFAULT.items():
+        for i, valor in enumerate(valores):
+            existe = conn.execute(
+                "SELECT COUNT(*) FROM parametros WHERE categoria = ? AND valor = ?",
+                [categoria, valor],
+            ).fetchone()[0]
+            if not existe:
+                pid = conn.execute("SELECT nextval('parametros_id_seq')").fetchone()[0]
+                conn.execute(
+                    "INSERT INTO parametros (id, categoria, valor, ordem) VALUES (?, ?, ?, ?)",
+                    [pid, categoria, valor, i],
+                )
+
+    # Migração: atualizar senha padrão antiga (12345TJ → TJ12345) apenas para quem não alterou
+    _rows = conn.execute("SELECT nome, senha_hash FROM usuarios").fetchall()
+    for _nome, _hash in _rows:
+        try:
+            if bcrypt.checkpw("12345TJ".encode(), _hash.encode()):
+                _novo_hash = bcrypt.hashpw(SENHA_PADRAO.encode(), bcrypt.gensalt()).decode()
+                conn.execute("UPDATE usuarios SET senha_hash = ? WHERE nome = ?", [_novo_hash, _nome])
+        except Exception:
+            pass
+
+    # Migração: normalizar valores antigos de tipo_usuario (case-insensitive)
+    conn.execute("UPDATE usuarios SET tipo_usuario = 'Administrador' WHERE lower(tipo_usuario) = 'administrador'")
+    conn.execute("UPDATE usuarios SET tipo_usuario = 'Básico' WHERE lower(tipo_usuario) = 'basico'")
+
+    # Garantir perfis dos usuários padrão
+    conn.execute("UPDATE usuarios SET tipo_usuario = 'Administrador' WHERE nome = 'Monique'")
+    for nome in [n for n in USUARIOS_PADRAO if n != "Monique"]:
+        conn.execute(
+            "UPDATE usuarios SET tipo_usuario = 'Básico' WHERE nome = ?", [nome]
+        )
+
+    # Inserir usuários padrão (caso ainda não existam)
+    for nome in USUARIOS_PADRAO:
+        existe = conn.execute(
+            "SELECT COUNT(*) FROM usuarios WHERE nome = ?", [nome]
+        ).fetchone()[0]
+        if not existe:
+            senha_hash = bcrypt.hashpw(SENHA_PADRAO.encode(), bcrypt.gensalt()).decode()
+            uid = conn.execute("SELECT nextval('usuarios_id_seq')").fetchone()[0]
+            tipo = "Administrador" if nome == "Monique" else "Básico"
+            conn.execute(
+                "INSERT INTO usuarios (id, nome, senha_hash, email, tipo_usuario) VALUES (?, ?, ?, ?, ?)",
+                [uid, nome, senha_hash, "", tipo],
+            )
+
+    # Criar usuário Master (único, imutável)
+    master_existe = conn.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE tipo_usuario = 'Master'"
+    ).fetchone()[0]
+    if not master_existe:
+        senha_hash = bcrypt.hashpw(SENHA_MASTER.encode(), bcrypt.gensalt()).decode()
+        uid = conn.execute("SELECT nextval('usuarios_id_seq')").fetchone()[0]
+        conn.execute(
+            "INSERT INTO usuarios (id, nome, senha_hash, email, tipo_usuario) VALUES (?, ?, ?, ?, ?)",
+            [uid, "Master", senha_hash, "", "Master"],
+        )
+
+
+# ─────────────────────────────────────────────
+# PARÂMETROS (Tipo, Vara, Situação)
+# ─────────────────────────────────────────────
+def listar_opcoes(categoria: str) -> list[str]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT valor FROM parametros WHERE categoria = ? ORDER BY ordem, valor",
+        [categoria],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def listar_parametros(categoria: str) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, valor FROM parametros WHERE categoria = ? ORDER BY ordem, valor",
+        [categoria],
+    ).fetchall()
+    return [{"id": r[0], "valor": r[1]} for r in rows]
+
+
+def adicionar_parametro(categoria: str, valor: str) -> tuple[bool, str]:
+    conn = get_conn()
+    valor = valor.strip()
+    if not valor:
+        return False, "O valor não pode ser vazio."
+    existe = conn.execute(
+        "SELECT COUNT(*) FROM parametros WHERE categoria = ? AND valor = ?",
+        [categoria, valor],
+    ).fetchone()[0]
+    if existe:
+        return False, f"'{valor}' já existe nesta categoria."
+    pid = conn.execute("SELECT nextval('parametros_id_seq')").fetchone()[0]
+    ordem = conn.execute(
+        "SELECT COALESCE(MAX(ordem), 0) + 1 FROM parametros WHERE categoria = ?", [categoria]
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO parametros (id, categoria, valor, ordem) VALUES (?, ?, ?, ?)",
+        [pid, categoria, valor, ordem],
+    )
+    return True, f"'{valor}' adicionado com sucesso."
+
+
+def remover_parametro(param_id: int) -> tuple[bool, str]:
+    conn = get_conn()
+    conn.execute("DELETE FROM parametros WHERE id = ?", [param_id])
+    return True, "Parâmetro removido com sucesso."
+
+
+# ─────────────────────────────────────────────
+# USUÁRIOS
+# ─────────────────────────────────────────────
+def listar_usuarios(incluir_master: bool = False) -> list[str]:
+    conn = get_conn()
+    if incluir_master:
+        rows = conn.execute("SELECT nome FROM usuarios ORDER BY nome").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT nome FROM usuarios WHERE tipo_usuario != 'Master' ORDER BY nome"
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def listar_usuarios_completo() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, nome, email, tipo_usuario FROM usuarios ORDER BY nome"
+    ).fetchall()
+    def _norm(v):
+        v = (v or "").strip().lower()
+        if v == "master": return "Master"
+        if v == "administrador": return "Administrador"
+        return "Básico"
+    return [{"id": r[0], "nome": r[1], "email": r[2] or "", "tipo_usuario": _norm(r[3])} for r in rows]
+
+
+def get_tipo_usuario(nome: str) -> str:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT tipo_usuario FROM usuarios WHERE nome = ?", [nome]
+    ).fetchone()
+    if not row:
+        return "Básico"
+    val = (row[0] or "").strip().lower()
+    if val == "master": return "Master"
+    if val == "administrador": return "Administrador"
+    return "Básico"
+
+
+def verificar_senha(nome: str, senha: str) -> bool:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT senha_hash FROM usuarios WHERE nome = ?", [nome]
+    ).fetchone()
+    if not row:
+        return False
+    return bcrypt.checkpw(senha.encode(), row[0].encode())
+
+
+def trocar_senha(nome: str, senha_atual: str, nova_senha: str) -> tuple[bool, str]:
+    if not verificar_senha(nome, senha_atual):
+        return False, "Senha atual incorreta."
+    if len(nova_senha) < 6:
+        return False, "A nova senha deve ter pelo menos 6 caracteres."
+    nova_hash = bcrypt.hashpw(nova_senha.encode(), bcrypt.gensalt()).decode()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE usuarios SET senha_hash = ? WHERE nome = ?", [nova_hash, nome]
+    )
+    return True, "Senha alterada com sucesso!"
+
+
+def adicionar_usuario(nome: str, email: str, tipo_usuario: str, senha: str = None) -> tuple[bool, str]:
+    if senha is None:
+        senha = SENHA_PADRAO
+    nome = nome.strip()
+    if not nome:
+        return False, "O nome não pode ser vazio."
+    if len(senha) < 6:
+        return False, "A senha deve ter pelo menos 6 caracteres."
+    conn = get_conn()
+    existe = conn.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE nome = ?", [nome]
+    ).fetchone()[0]
+    if existe:
+        return False, f"Usuário '{nome}' já existe."
+    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt()).decode()
+    uid = conn.execute("SELECT nextval('usuarios_id_seq')").fetchone()[0]
+    conn.execute(
+        "INSERT INTO usuarios (id, nome, senha_hash, email, tipo_usuario) VALUES (?, ?, ?, ?, ?)",
+        [uid, nome, senha_hash, email.strip(), tipo_usuario],
+    )
+    return True, f"Usuário '{nome}' criado com sucesso."
+
+
+def atualizar_usuario(usuario_id: int, nome: str, email: str, tipo_usuario: str) -> tuple[bool, str]:
+    nome = nome.strip()
+    conn = get_conn()
+    row = conn.execute("SELECT tipo_usuario FROM usuarios WHERE id = ?", [usuario_id]).fetchone()
+    if row and row[0] == "Master":
+        return False, "O usuário Master não pode ser editado."
+    conflito = conn.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE nome = ? AND id != ?", [nome, usuario_id]
+    ).fetchone()[0]
+    if conflito:
+        return False, f"Nome '{nome}' já pertence a outro usuário."
+    conn.execute(
+        "UPDATE usuarios SET nome = ?, email = ?, tipo_usuario = ? WHERE id = ?",
+        [nome, email.strip(), tipo_usuario, usuario_id],
+    )
+    return True, "Usuário atualizado com sucesso."
+
+
+def redefinir_senha_usuario(usuario_id: int, nova_senha: str) -> tuple[bool, str]:
+    if len(nova_senha) < 6:
+        return False, "A senha deve ter pelo menos 6 caracteres."
+    nova_hash = bcrypt.hashpw(nova_senha.encode(), bcrypt.gensalt()).decode()
+    conn = get_conn()
+    conn.execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", [nova_hash, usuario_id])
+    return True, "Senha redefinida com sucesso."
+
+
+def remover_usuario(usuario_id: int, nome_logado: str) -> tuple[bool, str]:
+    conn = get_conn()
+    row = conn.execute("SELECT nome, tipo_usuario FROM usuarios WHERE id = ?", [usuario_id]).fetchone()
+    if not row:
+        return False, "Usuário não encontrado."
+    nome, tipo = row
+    if tipo == "Master":
+        return False, "O usuário Master não pode ser removido."
+    if nome == nome_logado:
+        return False, "Você não pode remover sua própria conta."
+    conn.execute("DELETE FROM usuarios WHERE id = ?", [usuario_id])
+    return True, f"Usuário '{nome}' removido com sucesso."
+
+
+# ─────────────────────────────────────────────
+# PROCESSOS
+# ─────────────────────────────────────────────
+def numero_processo_existe(numero: str) -> bool:
+    conn = get_conn()
+    digitos = "".join(c for c in numero if c.isdigit())
+    return conn.execute(
+        "SELECT COUNT(*) FROM processos "
+        "WHERE regexp_replace(numero_processo, '[^0-9]', '', 'g') = ?",
+        [digitos],
+    ).fetchone()[0] > 0
+
+
+def inserir_processo(dados: dict) -> tuple[bool, str]:
+    conn = get_conn()
+    existe = conn.execute(
+        "SELECT COUNT(*) FROM processos WHERE numero_processo = ?",
+        [dados["numero_processo"]],
+    ).fetchone()[0]
+    if existe:
+        return False, f"Número de processo '{dados['numero_processo']}' já cadastrado."
+
+    pid = conn.execute("SELECT nextval('processos_id_seq')").fetchone()[0]
+    conn.execute("""
+        INSERT INTO processos (
+            id, data_conclusao, numero_processo, reu_preso, tipo, vara,
+            sistema, responsavel, situacao, dias_aberto, observacao,
+            criado_por, atualizado_em
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        pid,
+        dados["data_conclusao"],
+        dados["numero_processo"],
+        dados["reu_preso"],
+        dados["tipo"],
+        dados["vara"],
+        dados["sistema"],
+        dados["responsavel"],
+        dados["situacao"],
+        dados["dias_aberto"],
+        dados.get("observacao", ""),
+        dados.get("criado_por", ""),
+        datetime.now(),
+    ])
+    return True, "Processo inserido com sucesso!"
+
+
+def listar_processos() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id, data_conclusao, numero_processo, reu_preso, tipo, vara,
+               sistema, responsavel, situacao, dias_aberto, observacao,
+               criado_por, criado_em, atualizado_em
+        FROM processos
+        ORDER BY criado_em DESC
+    """).fetchall()
+
+    cols = [
+        "id", "data_conclusao", "numero_processo", "reu_preso", "tipo",
+        "vara", "sistema", "responsavel", "situacao", "dias_aberto",
+        "observacao", "criado_por", "criado_em", "atualizado_em",
+    ]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def atualizar_processo(
+    processo_id: int,
+    numero_processo: str,
+    reu_preso: str,
+    tipo: str,
+    vara: str,
+    sistema: str,
+    responsavel: str,
+    situacao: str,
+    observacao: str,
+    data_conclusao: datetime,
+    dias_aberto: float,
+) -> tuple[bool, str]:
+    conn = get_conn()
+    conflito = conn.execute(
+        "SELECT COUNT(*) FROM processos WHERE numero_processo = ? AND id != ?",
+        [numero_processo, processo_id],
+    ).fetchone()[0]
+    if conflito:
+        return False, f"Número de processo '{numero_processo}' já pertence a outro registro."
+    conn.execute("""
+        UPDATE processos
+        SET numero_processo = ?, reu_preso = ?, tipo = ?, vara = ?, sistema = ?,
+            responsavel = ?, situacao = ?, observacao = ?,
+            data_conclusao = ?, dias_aberto = ?, atualizado_em = ?
+        WHERE id = ?
+    """, [
+        numero_processo, reu_preso, tipo, vara, sistema,
+        responsavel, situacao, observacao,
+        data_conclusao, dias_aberto, datetime.now(),
+        processo_id,
+    ])
+    return True, "Processo atualizado com sucesso!"
