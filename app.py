@@ -908,14 +908,14 @@ def dialog_confirmar_exclusao_parametro():
 
 @st.dialog("Novo Usuário")
 def dialog_novo_usuario_ger():
-    st.caption("A senha padrão **TJ12345** será atribuída automaticamente.")
     with st.form("form_add_user_ger"):
         nn = st.text_input("Nome *")
         ne = st.text_input("E-mail")
         nt = st.selectbox("Tipo *", ["Básico", "Administrador"])
+        ns = st.text_input("Senha *", type="password")
         c1, c2 = st.columns(2)
         if c1.form_submit_button("Criar", type="primary", use_container_width=True):
-            ok, msg = adicionar_usuario(nn, ne, nt)
+            ok, msg = adicionar_usuario(nn, ne, nt, ns)
             if ok:
                 st.session_state.pop("show_dialog_novo_usuario", None)
                 st.rerun()

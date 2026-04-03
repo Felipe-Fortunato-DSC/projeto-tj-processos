@@ -3,16 +3,8 @@ import duckdb
 import streamlit as st
 from datetime import datetime
 
-SENHA_PADRAO = "TJ12345"
 SENHA_MASTER = "Master290915@"
-USUARIOS_PADRAO = ["Alice", "Maria Clara", "Larissa", "Monique"]
 DB_LOCAL = "data/tj_processos.db"
-
-PARAMETROS_DEFAULT = {
-    "tipo_processo": ["Sentença", "Embargos"],
-    "vara":          ["V JVD", "I JVD", "16 VC", "39 VC"],
-    "situacao":      ["Minutando", "Juíza", "Corrigida", "Lançada"],
-}
 
 
 # ─────────────────────────────────────────────
@@ -93,49 +85,6 @@ def init_db():
         )
     """)
     conn.execute("CREATE SEQUENCE IF NOT EXISTS parametros_id_seq START 1")
-
-    # Seed dos parâmetros padrão
-    for categoria, valores in PARAMETROS_DEFAULT.items():
-        for i, valor in enumerate(valores):
-            existe = conn.execute(
-                "SELECT COUNT(*) FROM parametros WHERE categoria = ? AND valor = ?",
-                [categoria, valor],
-            ).fetchone()[0]
-            if not existe:
-                pid = conn.execute("SELECT nextval('parametros_id_seq')").fetchone()[0]
-                conn.execute(
-                    "INSERT INTO parametros (id, categoria, valor, ordem) VALUES (?, ?, ?, ?)",
-                    [pid, categoria, valor, i],
-                )
-
-    # Migração: atualizar senha padrão antiga (12345TJ → TJ12345) apenas para quem não alterou
-    _rows = conn.execute("SELECT nome, senha_hash FROM usuarios").fetchall()
-    for _nome, _hash in _rows:
-        try:
-            if bcrypt.checkpw("12345TJ".encode(), _hash.encode()):
-                _novo_hash = bcrypt.hashpw(SENHA_PADRAO.encode(), bcrypt.gensalt()).decode()
-                conn.execute("UPDATE usuarios SET senha_hash = ? WHERE nome = ?", [_novo_hash, _nome])
-        except Exception:
-            pass
-
-    # Migração: normalizar valores antigos de tipo_usuario (case-insensitive)
-    conn.execute("UPDATE usuarios SET tipo_usuario = 'Administrador' WHERE lower(tipo_usuario) = 'administrador'")
-    conn.execute("UPDATE usuarios SET tipo_usuario = 'Básico' WHERE lower(tipo_usuario) = 'basico'")
-
-    # Inserir usuários padrão apenas na primeira execução (banco vazio)
-    nao_master_count = conn.execute(
-        "SELECT COUNT(*) FROM usuarios WHERE tipo_usuario != 'Master'"
-    ).fetchone()[0]
-    if nao_master_count == 0:
-        for nome in USUARIOS_PADRAO:
-            senha_hash = bcrypt.hashpw(SENHA_PADRAO.encode(), bcrypt.gensalt()).decode()
-            uid = conn.execute("SELECT nextval('usuarios_id_seq')").fetchone()[0]
-            tipo = "Administrador" if nome == "Monique" else "Básico"
-            conn.execute(
-                "INSERT INTO usuarios (id, nome, senha_hash, email, tipo_usuario) VALUES (?, ?, ?, ?, ?)",
-                [uid, nome, senha_hash, "", tipo],
-            )
-        conn.commit()
 
     # Criar usuário Master (único, imutável)
     master_existe = conn.execute(
@@ -265,9 +214,7 @@ def trocar_senha(nome: str, senha_atual: str, nova_senha: str) -> tuple[bool, st
     return True, "Senha alterada com sucesso!"
 
 
-def adicionar_usuario(nome: str, email: str, tipo_usuario: str, senha: str = None) -> tuple[bool, str]:
-    if senha is None:
-        senha = SENHA_PADRAO
+def adicionar_usuario(nome: str, email: str, tipo_usuario: str, senha: str) -> tuple[bool, str]:
     nome = nome.strip()
     if not nome:
         return False, "O nome não pode ser vazio."
