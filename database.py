@@ -14,6 +14,9 @@ DB_LOCAL = "data/tj_processos.db"
 def get_conn() -> tuple[duckdb.DuckDBPyConnection, str]:
     try:
         token = st.secrets["motherduck"]["token"]
+        tmp = duckdb.connect(f"md:?motherduck_token={token}")
+        tmp.execute("CREATE DATABASE IF NOT EXISTS tj_processos")
+        tmp.close()
         conn = duckdb.connect(f"md:tj_processos?motherduck_token={token}")
         return conn, "motherduck"
     except KeyError:
