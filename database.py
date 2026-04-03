@@ -196,12 +196,14 @@ def adicionar_parametro(categoria: str, valor: str) -> tuple[bool, str]:
         "INSERT INTO parametros (id, categoria, valor, ordem) VALUES (?, ?, ?, ?)",
         [pid, categoria, valor, ordem],
     )
+    conn.commit()
     return True, f"'{valor}' adicionado com sucesso."
 
 
 def remover_parametro(param_id: int) -> tuple[bool, str]:
     conn = get_conn()
     conn.execute("DELETE FROM parametros WHERE id = ?", [param_id])
+    conn.commit()
     return True, "Parâmetro removido com sucesso."
 
 
@@ -265,6 +267,7 @@ def trocar_senha(nome: str, senha_atual: str, nova_senha: str) -> tuple[bool, st
     conn.execute(
         "UPDATE usuarios SET senha_hash = ? WHERE nome = ?", [nova_hash, nome]
     )
+    conn.commit()
     return True, "Senha alterada com sucesso!"
 
 
@@ -288,6 +291,7 @@ def adicionar_usuario(nome: str, email: str, tipo_usuario: str, senha: str = Non
         "INSERT INTO usuarios (id, nome, senha_hash, email, tipo_usuario) VALUES (?, ?, ?, ?, ?)",
         [uid, nome, senha_hash, email.strip(), tipo_usuario],
     )
+    conn.commit()
     return True, f"Usuário '{nome}' criado com sucesso."
 
 
@@ -306,6 +310,7 @@ def atualizar_usuario(usuario_id: int, nome: str, email: str, tipo_usuario: str)
         "UPDATE usuarios SET nome = ?, email = ?, tipo_usuario = ? WHERE id = ?",
         [nome, email.strip(), tipo_usuario, usuario_id],
     )
+    conn.commit()
     return True, "Usuário atualizado com sucesso."
 
 
@@ -315,6 +320,7 @@ def redefinir_senha_usuario(usuario_id: int, nova_senha: str) -> tuple[bool, str
     nova_hash = bcrypt.hashpw(nova_senha.encode(), bcrypt.gensalt()).decode()
     conn = get_conn()
     conn.execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", [nova_hash, usuario_id])
+    conn.commit()
     return True, "Senha redefinida com sucesso."
 
 
@@ -329,6 +335,7 @@ def remover_usuario(usuario_id: int, nome_logado: str) -> tuple[bool, str]:
     if nome == nome_logado:
         return False, "Você não pode remover sua própria conta."
     conn.execute("DELETE FROM usuarios WHERE id = ?", [usuario_id])
+    conn.commit()
     return True, f"Usuário '{nome}' removido com sucesso."
 
 
@@ -376,6 +383,7 @@ def inserir_processo(dados: dict) -> tuple[bool, str]:
         dados.get("criado_por", ""),
         datetime.now(),
     ])
+    conn.commit()
     return True, "Processo inserido com sucesso!"
 
 
@@ -429,4 +437,5 @@ def atualizar_processo(
         data_conclusao, dias_aberto, datetime.now(),
         processo_id,
     ])
+    conn.commit()
     return True, "Processo atualizado com sucesso!"
