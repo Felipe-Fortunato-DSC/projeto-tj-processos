@@ -52,10 +52,20 @@ def formatar_numero_processo(numero: str) -> str:
     return numero
 
 
-def formatar_data_br(dt_str: str) -> str:
-    """Converte 'YYYY-MM-DD HH:MM:SS' para 'DD/MM/YYYY HH:MM'"""
+def formatar_data_br(dt_val) -> str:
+    """Converte data/datetime para 'DD/MM/YYYY'"""
     try:
-        dt = datetime.strptime(dt_str[:16], "%Y-%m-%d %H:%M")
-        return dt.strftime("%d/%m/%Y %H:%M")
+        import pandas as pd
+        if pd.isna(dt_val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if dt_val is None:
+        return ""
+    if isinstance(dt_val, (datetime, date)):
+        return dt_val.strftime("%d/%m/%Y")
+    try:
+        dt = datetime.strptime(str(dt_val)[:10], "%Y-%m-%d")
+        return dt.strftime("%d/%m/%Y")
     except Exception:
-        return dt_str or ""
+        return str(dt_val) if dt_val else ""

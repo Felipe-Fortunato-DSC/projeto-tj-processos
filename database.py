@@ -94,6 +94,16 @@ def init_db():
     except Exception:
         pass
 
+    # Migração: coluna de data de alteração da situação
+    try:
+        conn.execute("ALTER TABLE processos ADD COLUMN data_alteracao_situacao TIMESTAMP")
+        conn.execute(
+            "UPDATE processos SET data_alteracao_situacao = criado_em "
+            "WHERE data_alteracao_situacao IS NULL"
+        )
+    except Exception:
+        pass
+
     # ── Parâmetros (Tipo, Vara, Situação) ──
     conn.execute("""
         CREATE TABLE IF NOT EXISTS parametros (
@@ -322,12 +332,13 @@ def inserir_processo(dados: dict) -> tuple[bool, str]:
         return False, f"Número de processo '{dados['numero_processo']}' já cadastrado."
 
     pid = conn.execute("SELECT nextval('processos_id_seq')").fetchone()[0]
+    agora = agora_br()
     conn.execute("""
         INSERT INTO processos (
             id, data_conclusao, numero_processo, reu_preso, tipo, vara,
             sistema, responsavel, situacao, dias_aberto, observacao,
-            criado_por, atualizado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            criado_por, atualizado_em, data_alteracao_situacao
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, [
         pid,
         dados["data_conclusao"],
@@ -341,7 +352,8 @@ def inserir_processo(dados: dict) -> tuple[bool, str]:
         dados["dias_aberto"],
         dados.get("observacao", ""),
         dados.get("criado_por", ""),
-        agora_br(),
+        agora,
+        agora,
     ])
     conn.commit()
     return True, "Novo Processo Incluído com Sucesso!"
@@ -352,7 +364,7 @@ def listar_processos() -> list[dict]:
     rows = conn.execute("""
         SELECT id, data_conclusao, numero_processo, reu_preso, tipo, vara,
                sistema, responsavel, situacao, dias_aberto, observacao,
-               criado_por, criado_em, atualizado_em
+               criado_por, criado_em, atualizado_em, data_alteracao_situacao
         FROM processos
         ORDER BY criado_em DESC
     """).fetchall()
@@ -361,6 +373,7 @@ def listar_processos() -> list[dict]:
         "id", "data_conclusao", "numero_processo", "reu_preso", "tipo",
         "vara", "sistema", "responsavel", "situacao", "dias_aberto",
         "observacao", "criado_por", "criado_em", "atualizado_em",
+        "data_alteracao_situacao",
     ]
     return [dict(zip(cols, r)) for r in rows]
 
@@ -375,7 +388,7 @@ def atualizar_processo(
     responsavel: str,
     situacao: str,
     observacao: str,
-    data_conclusao: datetime,
+    data_conclusao,
     dias_aberto: float,
 ) -> tuple[bool, str]:
     conn = _conn()
@@ -385,17 +398,40 @@ def atualizar_processo(
     ).fetchone()[0]
     if conflito:
         return False, f"Número de processo '{numero_processo}' já pertence a outro registro."
-    conn.execute("""
-        UPDATE processos
-        SET numero_processo = ?, reu_preso = ?, tipo = ?, vara = ?, sistema = ?,
-            responsavel = ?, situacao = ?, observacao = ?,
-            data_conclusao = ?, dias_aberto = ?, atualizado_em = ?
-        WHERE id = ?
-    """, [
-        numero_processo, reu_preso, tipo, vara, sistema,
-        responsavel, situacao, observacao,
-        data_conclusao, dias_aberto, agora_br(),
-        processo_id,
-    ])
+
+    row_atual = conn.execute(
+        "SELECT situacao FROM processos WHERE id = ?", [processo_id]
+    ).fetchone()
+    situacao_mudou = row_atual and row_atual[0] != situacao
+    agora = agora_br()
+
+    if situacao_mudou:
+        conn.execute("""
+            UPDATE processos
+            SET numero_processo = ?, reu_preso = ?, tipo = ?, vara = ?, sistema = ?,
+                responsavel = ?, situacao = ?, observacao = ?,
+                data_conclusao = ?, dias_aberto = ?, atualizado_em = ?,
+                data_alteracao_situacao = ?
+            WHERE id = ?
+        """, [
+            numero_processo, reu_preso, tipo, vara, sistema,
+            responsavel, situacao, observacao,
+            data_conclusao, dias_aberto, agora,
+            agora,
+            processo_id,
+        ])
+    else:
+        conn.execute("""
+            UPDATE processos
+            SET numero_processo = ?, reu_preso = ?, tipo = ?, vara = ?, sistema = ?,
+                responsavel = ?, situacao = ?, observacao = ?,
+                data_conclusao = ?, dias_aberto = ?, atualizado_em = ?
+            WHERE id = ?
+        """, [
+            numero_processo, reu_preso, tipo, vara, sistema,
+            responsavel, situacao, observacao,
+            data_conclusao, dias_aberto, agora,
+            processo_id,
+        ])
     conn.commit()
     return True, "Processo atualizado com sucesso!"

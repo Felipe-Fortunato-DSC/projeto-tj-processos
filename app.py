@@ -142,10 +142,11 @@ st.markdown("""
 }
 
 /* Alertas de situação */
-.badge-minutando  { color:#856404; background:#fff3cd; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
-.badge-juiza      { color:#0c5460; background:#d1ecf1; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
-.badge-corrigida  { color:#155724; background:#d4edda; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
-.badge-lancada    { color:#721c24; background:#f8d7da; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
+.badge-lancada    { color:#1a5c18; background:#c8f7c5; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
+.badge-minutando  { color:#0a3d6b; background:#c8e6ff; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
+.badge-juiza      { color:#6b0000; background:#ffd5d5; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
+.badge-corrigida  { color:#6b3500; background:#ffe5b4; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
+.badge-pendente   { color:#6b5e00; background:#fff9c4; padding:2px 8px; border-radius:20px; font-size:0.8rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -415,13 +416,20 @@ def aba_visualizacao():
     hoje = date.today()
     for idx, row in df.iterrows():
         try:
-            dt = datetime.strptime(row["data_conclusao"][:10], "%Y-%m-%d").date()
+            val = row["data_conclusao"]
+            if isinstance(val, datetime):
+                dt = val.date()
+            elif isinstance(val, date):
+                dt = val
+            else:
+                dt = datetime.strptime(str(val)[:10], "%Y-%m-%d").date()
             df.at[idx, "dias_aberto"] = calcular_dias_uteis(dt, hoje)
         except Exception:
             pass
 
     # Formatar datas para exibição
     df["data_conclusao_fmt"] = df["data_conclusao"].apply(formatar_data_br)
+    df["data_alteracao_situacao_fmt"] = df["data_alteracao_situacao"].apply(formatar_data_br)
     df["criado_em_fmt"] = df["criado_em"].apply(formatar_data_br)
     df["numero_processo_fmt"] = df["numero_processo"].apply(formatar_numero_processo)
 
@@ -504,6 +512,7 @@ def aba_visualizacao():
         "sistema": "Sistema",
         "responsavel": "Responsável",
         "situacao": "Situação",
+        "data_alteracao_situacao_fmt": "Alt. Situação",
         "dias_aberto": "Dias Úteis",
         "observacao": "Observação",
     }
@@ -512,7 +521,7 @@ def aba_visualizacao():
     df_display["Dias Úteis"] = df_display["Dias Úteis"].apply(lambda x: int(x) if pd.notna(x) else 0)
 
     # ── Paginação ──
-    ROWS_PER_PAGE = 10
+    ROWS_PER_PAGE = 30
     total = len(df_display)
     total_paginas = max(1, -(-total // ROWS_PER_PAGE))  # ceil division
 
@@ -526,15 +535,26 @@ def aba_visualizacao():
     fim = inicio + ROWS_PER_PAGE
     df_pagina = df_display.iloc[inicio:fim]
 
+    _SITUACAO_STYLE = {
+        "Lançada":   "background-color: #c8f7c5; color: #1a5c18;",
+        "Minutando": "background-color: #c8e6ff; color: #0a3d6b;",
+        "Juíza":     "background-color: #ffd5d5; color: #6b0000;",
+        "Corrigida": "background-color: #ffe5b4; color: #6b3500;",
+        "Pendente":  "background-color: #fff9c4; color: #6b5e00;",
+    }
+
+    df_styled = df_pagina.style\
+        .map(lambda v: _SITUACAO_STYLE.get(v, ""), subset=["Situação"])\
+        .map(
+            lambda v: "background-color: #ffd5d5; color: #6b0000; font-weight: 700;" if v == "Sim" else "",
+            subset=["Réu Preso"],
+        )
+
     st.dataframe(
-        df_pagina,
+        df_styled,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Situação": st.column_config.SelectboxColumn(
-                "Situação",
-                options=TIPOS_SITUACAO,
-            ),
             "Dias Úteis": st.column_config.NumberColumn("Dias Úteis", format="%d dias"),
         },
     )
@@ -603,17 +623,43 @@ def aba_visualizacao():
     _digitos_edit = "".join(c for c in processo_sel if c.isdigit())
     linha = df_filtrado[df_filtrado["numero_processo"] == _digitos_edit].iloc[0]
 
-    with st.form("form_edicao"):
+    # ── Conclusão Aberta (fora do form para rerender imediato) ──
+    _dc = linha["data_conclusao"]
+    try:
+        tem_conclusao = _dc is not None and not pd.isna(_dc)
+    except Exception:
+        tem_conclusao = _dc is not None and str(_dc).strip() not in ("", "None", "nan", "NaT")
+    if tem_conclusao:
         try:
-            dt_original = datetime.strptime(str(linha["data_conclusao"])[:16], "%Y-%m-%d %H:%M")
+            _dc = linha["data_conclusao"]
+            data_atual = _dc.date() if isinstance(_dc, datetime) else datetime.strptime(str(_dc)[:10], "%Y-%m-%d").date()
         except Exception:
-            dt_original = agora_br()
-        data_atual = dt_original.date()
-        hora_original = dt_original.time()
+            data_atual = date.today()
+    else:
+        data_atual = date.today()
 
+    chk_key = f"edit_abrir_conclusao_{int(linha['id'])}"
+    _edit_id = int(linha["id"])
+    if st.session_state.get("_last_edit_id") != _edit_id:
+        st.session_state["_last_edit_id"] = _edit_id
+        st.session_state[chk_key] = tem_conclusao
+    elif chk_key not in st.session_state:
+        st.session_state[chk_key] = tem_conclusao
+    abrir_conclusao_edit = st.checkbox("Conclusão Aberta", key=chk_key)
+
+    with st.form("form_edicao"):
         e1, e2 = st.columns(2)
         novo_numero = e1.text_input("Número do Processo", value=linha["numero_processo"])
-        nova_data = e2.date_input("Data de Conclusão", value=data_atual)
+        if abrir_conclusao_edit:
+            nova_data = e2.date_input("Data de Conclusão", value=data_atual)
+        else:
+            e2.date_input(
+                "Data de Conclusão",
+                value=None,
+                disabled=True,
+                help="Marque 'Conclusão Aberta' para habilitar",
+            )
+            nova_data = None
 
         e3, e4 = st.columns(2)
         novo_reu_preso = e3.selectbox(
@@ -656,12 +702,16 @@ def aba_visualizacao():
         btn_salvar = st.form_submit_button("Salvar Alterações", type="primary", use_container_width=True)
 
         if btn_salvar:
-            nova_data_conclusao = datetime.combine(nova_data, hora_original)
-            dias = calcular_dias_uteis(nova_data, date.today())
+            if abrir_conclusao_edit and nova_data is not None:
+                nova_data_conclusao = datetime.combine(nova_data, datetime.min.time())
+                dias = calcular_dias_uteis(nova_data, date.today())
+            else:
+                nova_data_conclusao = None
+                dias = None
             st.session_state.pending_edicao = {
                 "original": {
                     "numero_processo": linha["numero_processo"],
-                    "data_conclusao":  str(data_atual),
+                    "data_conclusao":  formatar_data_br(linha["data_conclusao"]) if tem_conclusao else None,
                     "reu_preso":       linha["reu_preso"],
                     "tipo":            linha["tipo"],
                     "vara":            linha["vara"],
@@ -672,7 +722,7 @@ def aba_visualizacao():
                 },
                 "novo": {
                     "numero_processo": novo_numero.strip(),
-                    "data_conclusao":  str(nova_data),
+                    "data_conclusao":  nova_data.strftime("%d/%m/%Y") if abrir_conclusao_edit and nova_data else None,
                     "reu_preso":       novo_reu_preso,
                     "tipo":            novo_tipo,
                     "vara":            nova_vara,
@@ -825,7 +875,7 @@ def aba_inclusao():
                 st.rerun()
             else:
                 if abrir_conclusao:
-                    data_conclusao_val = agora.strftime("%Y-%m-%d %H:%M:%S")
+                    data_conclusao_val = agora.strftime("%Y-%m-%d")
                     dias_aberto_val = calcular_dias_uteis(agora.date(), date.today())
                 else:
                     data_conclusao_val = None
@@ -1096,7 +1146,7 @@ def app_principal():
         st.markdown(f"### Olá, **{st.session_state.usuario_logado}**")
         tipo_label = {"Master": "Master", "Administrador": "Administrador"}.get(st.session_state.tipo_usuario, "Básico")
         st.caption(f"Perfil: {tipo_label}")
-        st.markdown(f"*{agora_br().strftime('%d/%m/%Y %H:%M')}*")
+        st.markdown(f"*{agora_br().strftime('%d/%m/%Y')}*")
         if db_mode() == "motherduck":
             st.caption("🟢 MotherDuck")
         else:
