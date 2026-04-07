@@ -550,10 +550,12 @@ def aba_visualizacao():
             subset=["Réu Preso"],
         )
 
+    table_height = 38 + len(df_pagina) * 35 + 3
     st.dataframe(
         df_styled,
         use_container_width=True,
         hide_index=True,
+        height=table_height,
         column_config={
             "Dias Úteis": st.column_config.NumberColumn("Dias Úteis", format="%d dias"),
         },
