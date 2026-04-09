@@ -7,6 +7,7 @@ import streamlit as st
 
 from database import (
     init_db,
+    get_conn,
     listar_usuarios,
     listar_usuarios_completo,
     get_tipo_usuario,
@@ -203,7 +204,15 @@ def render_logo(width: int = 120, centered: bool = False):
 def _cached_init_db():
     init_db()
 
-_cached_init_db()
+try:
+    _cached_init_db()
+except Exception as e:
+    st.error(f"Erro ao inicializar o banco de dados: {e}")
+    if st.button("🔄 Tentar novamente"):
+        _cached_init_db.clear()
+        get_conn.clear()
+        st.rerun()
+    st.stop()
 
 # ─────────────────────────────────────────────
 # SESSION STATE

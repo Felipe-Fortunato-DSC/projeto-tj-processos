@@ -31,6 +31,11 @@ def get_conn() -> tuple[duckdb.DuckDBPyConnection, str]:
 
 def _conn():
     conn, _ = get_conn()
+    try:
+        conn.execute("SELECT 1")
+    except Exception:
+        get_conn.clear()
+        conn, _ = get_conn()
     return conn
 
 
